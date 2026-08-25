@@ -277,7 +277,7 @@ input[type=checkbox]{accent-color:var(--ac)}
         </div>
         <div class="status" id="searchStatus">Necesitas conexión a internet solo para esta parte.</div>
         <ul id="resultList"></ul>
-        <div class="pnote">Busca en LaCuerda y CifraClub. En modo «Artista» listas todas sus canciones. Con el agente local (<code>node servidor.js</code>) se amplía a más fuentes.
+        <div class="pnote">Busca en LaCuerda, CifraClub y Ultimate Guitar. En modo «Artista» listas todas sus canciones. Con el agente local (<code>node servidor.js</code>) se amplía a más fuentes.
         Si algún resultado no carga, ábrelo en su web original y copia el texto aquí: todo lo pegado
         queda guardado y funcionará sin conexión.</div>
       </div>
@@ -1036,6 +1036,37 @@ function extraerCc(pag){
   return txt.replace(/\n{4,}/g,'\n\n\n').trim()||null;
 }
 
+function parsearBuscaUG(md){
+  const res=[];
+  const re=/\[([^\]]+)\]\(https:\/\/tabs\.ultimate-guitar\.com\/tab\/([^)]+)\)/g;
+  let m;
+  while((m=re.exec(md))){
+    if(m[1].length<2)continue;
+    const parts=m[2].split('/');
+    const artista=parts[0]||'';
+    res.push({titulo:m[1],artista:artista.split('_').map(w=>w[0].toUpperCase()+w.slice(1)).join(' '),tipo:'Acordes',votos:0,
+      url:'https://tabs.ultimate-guitar.com/tab/'+m[2],
+      fuenteId:'ug',fuenteNombre:'Ultimate Guitar'});
+  }
+  return res;
+}
+function extraerUG(pag){
+  let txt=pag.md?pag.texto:pag.texto;
+  txt=txt.replace(/^Title:[^\n]*$/mi,'').replace(/^URL Source:[^\n]*$/mi,'')
+    .replace(/^Published Time:[^\n]*$/mi,'').replace(/^Markdown Content:\s*$/mi,'');
+  const i=txt.indexOf('```');
+  if(i>-1){
+    const j=txt.indexOf('```',i+3);
+    if(j>-1)txt=txt.slice(i+3,j);
+  }
+  return txt.replace(/\n{4,}/g,'\n\n\n').trim()||null;
+}
+async function buscarUG(q){
+  try{
+    const pag=await traerPagina('https://www.ultimate-guitar.com/search.php?search_term='+encodeURIComponent(q)+'&type=300');
+    return parsearBuscaUG(pag.texto).slice(0,20);
+  }catch(e){return [];}
+}
 async function ugSearch(q){
   const u='https://www.ultimate-guitar.com/search.php?search_term='+encodeURIComponent(q)+'&type=300';
   const html=await tryFetch(u);
@@ -1128,7 +1159,7 @@ async function detectarAgente(){
 }
 function textoModo(){
   return AG?'Agente local activo: '+AG.fuentes.map(f=>f.nombre).join(' · ')+'.'
-           :'Modo estático: búsqueda en LaCuerda/CifraClub vía proxies públicos.';
+           :'Modo estático: búsqueda en LaCuerda, CifraClub y Ultimate Guitar vía proxies públicos.';
 }
 function pintarResultados(lista,fallos){
   const ul=$('resultList');
@@ -1183,7 +1214,7 @@ async function doSearch(){
       const esArtista=$('selModo')&&$('selModo').value==='artista';
       setStatus($('searchStatus'),esArtista?'Buscando artista en LaCuerda y CifraClub…':'Buscando en LaCuerda y CifraClub…',false);
       let lista=[];
-      try{lista=esArtista?await buscarArtista(q):await buscarLaCuerda(q);}catch(e){}
+      try{const [rLc,rUg]=await Promise.allSettled([esArtista?buscarArtista(q):buscarLaCuerda(q),buscarUG(q)]);lista=[...(rLc.status==='fulfilled'?rLc.value:[]),...(rUg.status==='fulfilled'?rUg.value:[])];}catch(e){}
       if(!lista.length){
         const res=await ugSearch(q);
         lista=res.map(x=>({titulo:x.title,artista:x.artist,tipo:x.type,votos:x.votes,url:x.url,fuenteId:'ug',fuenteNombre:'Ultimate Guitar'}));
@@ -1214,6 +1245,9 @@ async function loadTab(it){
       }else if(it.fuenteId==='cifraclub'){
         const pag=await traerPagina(it.url);
         t=extraerCc(pag);
+      }else if(it.fuenteId==='ug'||it.url.includes('ultimate-guitar.com')){
+        const pag=await traerPagina(it.url);
+        t=extraerUG(pag);
       }else{
         const html=await tryFetch(it.url);
         t=extractTab(html);
