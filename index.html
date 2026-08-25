@@ -32,6 +32,9 @@ header{position:sticky;top:0;z-index:60;height:var(--hh);display:flex;align-item
   border-radius:8px;cursor:pointer;font-size:13px;white-space:nowrap}
 .btn:hover{border-color:var(--ac)}
 .btn.pri{background:var(--ac);color:#07271b;border-color:transparent;font-weight:700}
+.spin::after{content:'';display:inline-block;width:14px;height:14px;margin-left:6px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:sp .6s linear infinite;vertical-align:middle}
+@keyframes sp{to{transform:rotate(360deg)}}
+.btn{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .btn.danger{color:var(--danger)}
 .btn.on{background:var(--ac);color:#07271b;border-color:transparent;font-weight:700}
 .btn.mini{padding:4px 9px;font-size:12px}
@@ -1171,7 +1174,11 @@ async function doSearch(){
   const q=$('inpQuery').value.trim();
   if(!q)return;
   busySearch=true;
-  $('btnSearch').disabled=true;
+  const btn=$('btnSearch');
+  btn.disabled=true;
+  btn.dataset.txt=btn.textContent;
+  btn.textContent='Buscando…';
+  btn.classList.add('spin');
   setStatus($('searchStatus'),AG?'Consultando las fuentes…':'Buscando «'+q+'»…',false);
   $('resultList').innerHTML='';
   try{
@@ -1182,24 +1189,26 @@ async function doSearch(){
       pintarResultados(j.resultados||[],j.fallos);
     }else{
       const esArtista=$('selModo')&&$('selModo').value==='artista';
-      setStatus($('searchStatus'),esArtista?'Buscando artista en LaCuerda y CifraClub…':'Buscando en LaCuerda y CifraClub…',false);
       let lista=[];
       try{const [rLc,rUg]=await Promise.allSettled([esArtista?buscarArtista(q):buscarLaCuerda(q),buscarUG(q)]);lista=[...(rLc.status==='fulfilled'?rLc.value:[]),...(rUg.status==='fulfilled'?rUg.value:[])];}catch(e){}
-      if(!lista.length){
-        const res=await ugSearch(q);
-        lista=res.map(x=>({titulo:x.title,artista:x.artist,tipo:x.type,votos:x.votes,url:x.url,fuenteId:'ug',fuenteNombre:'Ultimate Guitar'}));
-      }
       pintarResultados(lista,[]);
     }
   }catch(e){
-    setStatus($('searchStatus'),'No se pudo buscar (¿sin internet?, ¿servicios caídos?). Pega el texto manualmente: funcionará igual.',true);
+    setStatus($('searchStatus'),'No se pudo buscar (¿sin internet?, ¿servicios caídos?). Pega el texto manualmente.',true);
   }
   busySearch=false;
-  $('btnSearch').disabled=false;
+  btn.disabled=false;
+  btn.textContent=btn.dataset.txt||'Buscar';
+  btn.classList.remove('spin');
 }
 async function loadTab(it){
   if(busyTab)return;
   busyTab=true;
+  const btn=$('btnSearch');
+  btn.dataset.txt=btn.textContent;
+  btn.textContent='Descargando…';
+  btn.disabled=true;
+  btn.classList.add('spin');
   setStatus($('searchStatus'),'Descargando «'+(it.titulo||it.title)+'» de '+(it.fuenteNombre||'Ultimate Guitar')+'…',false);
   try{
     let t;
@@ -1237,6 +1246,9 @@ async function loadTab(it){
     setStatus($('searchStatus'),'No se pudo descargar esa tablatura. Prueba otra fuente, o cópiala desde la web y pégala aquí.',true);
   }
   busyTab=false;
+  btn.disabled=false;
+  btn.textContent=btn.dataset.txt||'Buscar';
+  btn.classList.remove('spin');
 }
 let busyYt=false;
 async function doLyrics(){
