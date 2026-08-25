@@ -125,9 +125,9 @@ input[type=checkbox]{accent-color:var(--ac)}
 .srow input:focus{border-color:var(--ac)}
 .status{font-size:12.5px;color:var(--mut);min-height:18px;margin:4px 0 8px}
 .status.err{color:var(--danger)}
-#resultList,#ytList{list-style:none;max-height:260px;overflow-y:auto}
-#resultList li,#ytList li{padding:8px 10px;border-radius:8px;font-size:13.5px;display:block;margin-bottom:2px}
-#resultList li:hover,#ytList li:hover{background:var(--bg3)}
+#resultList{list-style:none;max-height:260px;overflow-y:auto}
+#resultList li{padding:8px 10px;border-radius:8px;font-size:13.5px;display:block;margin-bottom:2px}
+#resultList li:hover{background:var(--bg3)}
 .ytrow{display:flex;align-items:center;gap:10px}
 .ytmeta{flex:1;min-width:0}
 .ytmeta b{display:block;font-weight:600;line-height:1.3;font-size:13.5px}
@@ -267,7 +267,6 @@ input[type=checkbox]{accent-color:var(--ac)}
       </div>
       <div class="tabs">
         <button class="tab active" id="tabSearchBtn">Buscar en línea</button>
-        <button class="tab" id="tabYtBtn">YouTube</button>
         <button class="tab" id="tabPasteBtn">Pegar texto</button>
       </div>
       <div class="pane" id="searchPane">
@@ -277,21 +276,9 @@ input[type=checkbox]{accent-color:var(--ac)}
         </div>
         <div class="status" id="searchStatus">Necesitas conexión a internet solo para esta parte.</div>
         <ul id="resultList"></ul>
-        <div class="pnote">Busca en Ultimate Guitar, CifraClub, LaCuerda y GuitarTab. Con el agente local (<code>node servidor.js</code>) descarga directo; sin él, usa solo Ultimate Guitar vía proxies públicos.
+        <div class="pnote">Busca en Ultimate Guitar, CifraClub, LaCuerda y GuitarTab. Con el agente local (<code>node servidor.js</code>) descarga directo; sin él, busca en LaCuerda vía proxies públicos.
         Si algún resultado no carga, ábrelo en su web original y copia el texto aquí: todo lo pegado
         queda guardado y funcionará sin conexión.</div>
-      </div>
-      <div class="pane hide" id="ytPane">
-        <div class="srow">
-          <input id="inpYt" placeholder="Canción o enlace de YouTube…">
-          <button class="btn pri" id="btnYt">Buscar</button>
-        </div>
-        <div class="status" id="ytStatus"></div>
-        <ul id="ytList"></ul>
-        <div class="pnote">Elige un video: <b>Letra</b> trae los subtítulos · <b>Acordes</b> busca esa versión en las webs
-        de tablaturas por título · <b>Audio</b> (experimental) descarga el audio e intenta detectar los acordes:
-        salen aproximados, revísalos. Para máxima calidad puedes copiar el enlace (<b>⧉ Enlace</b>) y pegarlo en
-        ChordAI o Moises, que no ofrecen API pero aceptan enlaces de YouTube.</div>
       </div>
       <div class="pane hide" id="pastePane">
         <div class="frow">
@@ -911,26 +898,97 @@ function showPop(name,x,y){
 }
 function hidePop(){$('pop').style.display='none';}
 
-const PROXIES=[
-  u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
-  u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
-  u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u)
+function conTm(ms){
+  const c=new AbortController();
+  setTimeout(()=>c.abort(),ms);
+  return c.signal;
+}
+const TRANSPORTES=[
+  async u=>{
+    const r=await fetch('https://api.allorigins.win/get?url='+encodeURIComponent(u),{signal:conTm(25000)});
+    if(!r.ok)throw new Error('allorigins '+r.status);
+    const j=await r.json();
+    const t=(j&&j.contents)||'';
+    if(!t||t.length<200)throw new Error('allorigins vacío');
+    return{md:false,texto:t};
+  },
+  async u=>{
+    const r=await fetch('https://r.jina.ai/'+u,{signal:conTm(30000)});
+    if(!r.ok)throw new Error('jina '+r.status);
+    const t=await r.text();
+    if(!t||t.length<100)throw new Error('jina vacío');
+    return{md:true,texto:t};
+  },
+  async u=>{
+    const r=await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(u),{signal:conTm(25000)});
+    if(!r.ok)throw new Error('proxy '+r.status);
+    const t=await r.text();
+    if(!t||t.length<200)throw new Error('proxy vacío');
+    return{md:false,texto:t};
+  }
 ];
-async function tryFetch(url){
+async function traerPagina(url){
   let err=new Error('sin salida');
-  for(const mk of PROXIES){
-    try{
-      const c=new AbortController();
-      const tm=setTimeout(()=>c.abort(),20000);
-      const r=await fetch(mk(url),{signal:c.signal});
-      clearTimeout(tm);
-      if(r.ok){
-        const t=await r.text();
-        if(t&&t.length>150)return t;
-      }else err=new Error('HTTP '+r.status);
-    }catch(e){err=e;}
+  for(let ronda=0;ronda<2;ronda++){
+    for(const tr of TRANSPORTES){
+      try{
+        const res=await tr(url);
+        if(res.md||res.texto.length>150)return res;
+        err=new Error('respuesta corta');
+      }catch(e){err=e;}
+    }
   }
   throw err;
+}
+async function tryFetch(url){
+  const p=await traerPagina(url);
+  return p.texto;
+}
+function slugLc(s){
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/ñ/g,'n').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+}
+function parsearBuscaLc(texto){
+  const filas=[];
+  let m;
+  if(/\[Image \d+\]/.test(texto.slice(0,2000))||texto.indexOf('<td')<0){
+    const re=/\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/([a-z0-9_]+)\/\)[\s\S]{0,60}?\[([^\]]+)\]\(javascript:[^)]*\)/gi;
+    while((m=re.exec(texto)))filas.push({artista:m[1].trim(),artistaSlug:m[2],titulo:m[3].trim()});
+  }else{
+    const re=/href="(\/[a-z0-9_]+\/)"[^>]*>([^<]{1,80})<\/a>\s*<\/t[dD]>\s*<[tT][dD]>[\s\S]*?<li[^>]*><a href="javascript:[^"]*">([^<]+)<\/[aA]>/g;
+    while((m=re.exec(texto)))filas.push({artista:m[2].trim(),artistaSlug:m[1],titulo:m[3].trim()});
+  }
+  return filas;
+}
+function extraerLc(pag){
+  let cuerpo=null;
+  if(pag.md){
+    cuerpo=pag.texto.replace(/\[([^\]\n]{1,14})\]\([^)]*\)/g,'$1')
+      .replace(/^Title:[^\n]*$/mi,'')
+      .replace(/^URL Source:[^\n]*$/mi,'')
+      .replace(/^Published Time:[^\n]*$/mi,'')
+      .replace(/^Markdown Content:\s*$/mi,'');
+    const li=cuerpo.search(/^[ \t]{2,}[^\s]/m);
+    if(li>0)cuerpo=cuerpo.slice(li);
+  }else{
+    const mt=pag.texto.match(/<div id=t_body>[\s\S]*?<PRE>([\s\S]*?)<\/PRE>/i)
+      ||pag.texto.match(/<PRE>([\s\S]*?)<\/PRE>/i);
+    if(mt)cuerpo=mt[1].replace(/<div><\/div>/gi,'\n').replace(/<[^>]+>/g,'');
+  }
+  if(!cuerpo)return null;
+  return cuerpo.replace(/\n{4,}/g,'\n\n\n').trim();
+}
+async function buscarLaCuerda(q){
+  const pag=await traerPagina('https://acordes.lacuerda.net/busca.php?lang=ES&exp='+encodeURIComponent(q)+'&canc=&ord=&ini=0');
+  return parsearBuscaLc(pag.texto).map(f=>({
+    titulo:f.titulo,
+    artista:f.artista,
+    tipo:'Acordes',
+    votos:0,
+    url:'https://acordes.lacuerda.net/'+f.artistaSlug+'/'+slugLc(f.titulo)+'.shtml',
+    fuenteId:'lacuerda',
+    fuenteNombre:'LaCuerda'
+  })).slice(0,40);
 }
 async function ugSearch(q){
   const u='https://www.ultimate-guitar.com/search.php?search_term='+encodeURIComponent(q)+'&type=300';
@@ -977,10 +1035,8 @@ function cleanTab(t){
 
 function switchPane(which){
   $('searchPane').classList.toggle('hide',which!=='search');
-  $('ytPane').classList.toggle('hide',which!=='yt');
   $('pastePane').classList.toggle('hide',which!=='paste');
   $('tabSearchBtn').classList.toggle('active',which==='search');
-  $('tabYtBtn').classList.toggle('active',which==='yt');
   $('tabPasteBtn').classList.toggle('active',which==='paste');
 }
 function openModal(editId){
@@ -994,9 +1050,6 @@ function openModal(editId){
   $('songText').value=s?s.text:'';
   $('inpQuery').value='';
   $('resultList').innerHTML='';
-  $('inpYt').value='';
-  $('ytList').innerHTML='';
-  setStatus($('ytStatus'),'',false);
    setStatus($('searchStatus'),textoModo(),false);
   setStatus($('lyricsStatus'),'',false);
   stopScroll();
@@ -1029,7 +1082,7 @@ async function detectarAgente(){
 }
 function textoModo(){
   return AG?'Agente local activo: '+AG.fuentes.map(f=>f.nombre).join(' · ')+'.'
-           :'Sin agente local (node servidor.js): solo Ultimate Guitar vía proxies públicos.';
+           :'Modo estático: búsqueda en LaCuerda vía proxy público.';
 }
 function pintarResultados(lista,fallos){
   const ul=$('resultList');
@@ -1081,8 +1134,14 @@ async function doSearch(){
       if(j.error)throw new Error(j.error);
       pintarResultados(j.resultados||[],j.fallos);
     }else{
-      const res=await ugSearch(q);
-      pintarResultados(res.map(x=>({titulo:x.title,artista:x.artist,tipo:x.type,votos:x.votes,url:x.url,fuenteId:'ug',fuenteNombre:'Ultimate Guitar'})),[]);
+      setStatus($('searchStatus'),'Buscando en LaCuerda vía proxy público…',false);
+      let lista=[];
+      try{lista=await buscarLaCuerda(q);}catch(e){}
+      if(!lista.length){
+        const res=await ugSearch(q);
+        lista=res.map(x=>({titulo:x.title,artista:x.artist,tipo:x.type,votos:x.votes,url:x.url,fuenteId:'ug',fuenteNombre:'Ultimate Guitar'}));
+      }
+      pintarResultados(lista,[]);
     }
   }catch(e){
     setStatus($('searchStatus'),'No se pudo buscar (¿sin internet?, ¿servicios caídos?). Pega el texto manualmente: funcionará igual.',true);
@@ -1102,8 +1161,13 @@ async function loadTab(it){
       if(j.error)throw new Error(j.error);
       t=j.texto;
     }else{
-      const html=await tryFetch(it.url);
-      t=extractTab(html);
+      if(it.fuenteId==='lacuerda'){
+        const pag=await traerPagina(it.url);
+        t=extraerLc(pag);
+      }else{
+        const html=await tryFetch(it.url);
+        t=extractTab(html);
+      }
     }
     if(t){
       t=cleanTab(t);
@@ -1121,123 +1185,6 @@ async function loadTab(it){
   busyTab=false;
 }
 let busyYt=false;
-function idDeYt(texto){
-  const m=(texto||'').match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/);
-  return m?m[1]:null;
-}
-async function doYtSearch(){
-  if(busyYt)return;
-  let q=$('inpYt').value.trim();
-  if(!q)return;
-  const idDirecto=idDeYt(q);
-  busyYt=true;
-  $('btnYt').disabled=true;
-  $('ytList').innerHTML='';
-  try{
-    if(idDirecto){
-      setStatus($('ytStatus'),'Video directo: '+idDirecto,false);
-      const meta=await fetch(AG?AG.base+'/api/yttitulo?id='+encodeURIComponent(idDirecto):'about:blank').then(r=>r.ok?r.json():null).catch(()=>null);
-      pintarVideos([{id:idDirecto,titulo:(meta&&meta.titulo)||'Video de YouTube',tituloLimpio:(meta&&meta.titulo)||'',canal:(meta&&meta.canal)||'',duracion:'',url:'https://www.youtube.com/watch?v='+idDirecto}]);
-    }else{
-      if(!AG)throw new Error('necesitas el agente local (node servidor.js) para YouTube');
-      setStatus($('ytStatus'),'Buscando en YouTube…',false);
-      const r=await fetch(AG.base+'/api/yt?q='+encodeURIComponent(q));
-      const j=await r.json();
-      if(j.error)throw new Error(j.error);
-      pintarVideos(j.videos||[]);
-    }
-  }catch(e){
-    setStatus($('ytStatus'),'No se pudo buscar en YouTube: '+(e.message||e),true);
-  }
-  busyYt=false;
-  $('btnYt').disabled=false;
-}
-function pintarVideos(videos){
-  const ul=$('ytList');
-  ul.innerHTML='';
-  if(!videos.length){setStatus($('ytStatus'),'Sin resultados. Prueba con «artista canción».');return;}
-  setStatus($('ytStatus'),videos.length+' videos. «Letra» trae los subtítulos; «Acordes» busca la versión en las webs de tablaturas.',false);
-  for(const v of videos){
-    const li=document.createElement('li');
-    li.className='ytrow';
-    const meta=document.createElement('div');
-    meta.className='ytmeta';
-    meta.innerHTML='<b>'+esc(v.tituloLimpio||v.titulo)+'</b><span>'+esc(v.canal||'')+(v.duracion?' · '+esc(v.duracion):'')+'</span>';
-    li.appendChild(meta);
-    const bA=document.createElement('button');
-    bA.className='btn mini';
-    bA.textContent='Acordes';
-    bA.onclick=()=>usarTituloYt(v);
-    li.appendChild(bA);
-    const bL=document.createElement('button');
-    bL.className='btn mini';
-    bL.textContent='Letra';
-    bL.onclick=()=>traerLetraYt(v);
-    li.appendChild(bL);
-    if(AG&&AG.audio){
-      const bS=document.createElement('button');
-      bS.className='btn mini';
-      bS.textContent='Audio';
-      bS.title='Experimental: descarga el audio e intenta detectar los acordes';
-      bS.onclick=()=>traerAudioYt(v);
-      li.appendChild(bS);
-    }
-    const bC=document.createElement('button');
-    bC.className='btn mini';
-    bC.textContent='⧉ Enlace';
-    bC.title='Copiar enlace para usar en ChordAI, Moises, etc.';
-    bC.onclick=()=>{
-      const done=()=>toast('Enlace copiado. Pégalo en ChordAI/Moises o donde quieras.');
-      const fail=()=>toast('No se pudo copiar: '+v.url);
-      if(navigator.clipboard&&navigator.clipboard.writeText)
-        navigator.clipboard.writeText(v.url).then(done).catch(fail);
-      else fail();
-    };
-    li.appendChild(bC);
-    ul.appendChild(li);
-  }
-}
-async function traerAudioYt(v){
-  if(!AG||!AG.audio){setStatus($('ytStatus'),'El análisis de audio no está disponible en este equipo.',true);return;}
-  setStatus($('ytStatus'),'Descargando el audio de «'+(v.tituloLimpio||v.titulo)+'» y detectando acordes… puede tardar 1-3 minutos.',false);
-  try{
-    const r=await fetch(AG.base+'/api/ytaudio?id='+encodeURIComponent(v.id));
-    const j=await r.json();
-    if(j.error)throw new Error(j.error);
-    const ta=$('songText');
-    const bloque='[Acordes por audio — experimental ('+(j.motor||'chroma')+'), revisa antes de confiar]\n'+j.texto+'\n';
-    ta.value=ta.value.trim()?ta.value.trimEnd()+'\n\n'+bloque:bloque;
-    if(!$('inpTitle').value.trim())$('inpTitle').value=v.tituloLimpio||v.titulo;
-    switchPane('paste');
-    setStatus($('ytStatus'),'Línea de tiempo de acordes añadida (aproximada). Combínala con la letra o corrige a mano.',false);
-  }catch(e){
-    setStatus($('ytStatus'),'No se pudo analizar el audio: '+(e.message||e),true);
-  }
-}
-async function traerLetraYt(v){
-  if(!AG){setStatus($('ytStatus'),'Necesitas el agente local para traer subtítulos.',true);return;}
-  setStatus($('ytStatus'),'Descargando subtítulos de «'+(v.tituloLimpio||v.titulo)+'»…',false);
-  try{
-    const r=await fetch(AG.base+'/api/ytletras?id='+encodeURIComponent(v.id));
-    const j=await r.json();
-    if(j.error)throw new Error(j.error);
-    const ta=$('songText');
-    ta.value=ta.value.trim()?ta.value.trim()+'\n\n'+j.texto:j.texto;
-    if(!$('inpTitle').value.trim())$('inpTitle').value=v.tituloLimpio||v.titulo;
-    if(!$('inpArtist').value.trim())$('inpArtist').value=v.canal||'';
-    switchPane('paste');
-    setStatus($('ytStatus'),'Letra añadida desde los subtítulos (sin acordes). Usa «⤵ Rellenar» o busca acordes por título.',false);
-  }catch(e){
-    setStatus($('ytStatus'),'Sin letra: '+(e.message||e)+'. Prueba otro video o «Acordes».',true);
-  }
-}
-async function usarTituloYt(v){
-  const t=v.tituloLimpio||v.titulo;
-  $('inpQuery').value=t;
-  switchPane('search');
-  doSearch();
-  toast('Buscando acordes de «'+t+'» en las fuentes…');
-}
 async function doLyrics(){
   if(busyLyrics)return;
   const ti=$('inpTitle').value.trim(),ar=$('inpArtist').value.trim();
@@ -1391,7 +1338,6 @@ function bind(){
   };
 
   $('tabSearchBtn').onclick=()=>switchPane('search');
-  $('tabYtBtn').onclick=()=>switchPane('yt');
   $('tabPasteBtn').onclick=()=>switchPane('paste');
   $('btnCancel').onclick=closeModal;
   $('modal').onclick=e=>{if(e.target===$('modal'))closeModal();};
@@ -1399,8 +1345,6 @@ function bind(){
   $('btnSearch').onclick=doSearch;
   $('inpQuery').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
   $('btnLyrics').onclick=doLyrics;
-  $('btnYt').onclick=doYtSearch;
-  $('inpYt').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doYtSearch();}});
 
   $('navToggle').onclick=e=>{e.stopPropagation();document.body.classList.toggle('navOpen');};
   document.addEventListener('click',e=>{
