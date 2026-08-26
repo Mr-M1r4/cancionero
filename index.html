@@ -670,39 +670,7 @@ function chordTones(name){
   return iv.map(i=>fmtN(p.rootIdx+i,p.flat));
 }
 
-function extractJson(str,i){
-  let d=0,inq=false,e=false;
-  for(let j=i;j<str.length;j++){
-    const ch=str[j];
-    if(e){e=false;continue;}
-    if(ch==='\\'){e=true;continue;}
-    if(ch==='"'){inq=!inq;continue;}
-    if(inq)continue;
-    if(ch==='{')d++;
-    else if(ch==='}'){d--;if(!d)return JSON.parse(str.slice(i,j+1));}
-  }
-  throw new Error('badjson');
-}
-function findResults(o){
-  if(Array.isArray(o)){
-    if(o.length&&o.some(x=>x&&typeof x==='object'&&x.tab_url))return o;
-    for(const v of o){const r=findResults(v);if(r)return r;}
-  }else if(o&&typeof o==='object'){
-    for(const k in o){const r=findResults(o[k]);if(r)return r;}
-  }
-  return null;
-}
-function fromUrl(u){
-  try{
-    const pa=new URL(u).pathname.split('/').filter(Boolean);
-    if(pa.length<3)return null;
-    const artist=pa[pa.length-2].replace(/_/g,' ');
-    let f=pa[pa.length-1].replace(/\.(htm|html)$/i,'');
-    f=f.replace(/[-_](crd|chords?|tab|ukulele|bass|power|drum)\d*$/i,'');
-    f=f.replace(/[-_]\d+$/,'');
-    return {title:f.replace(/[_-]+/g,' '),artist,type:'Tab',votes:0,url:u};
-  }catch(e){return null;}
-}
+
 </script>
 
 <script>
@@ -903,21 +871,14 @@ function showPop(name,x,y){
 function hidePop(){$('pop').style.display='none';}
 
 function conTm(ms){const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal;}
-const TRANSPORTES=[
-  async u=>{const r=await fetch('https://r.jina.ai/'+u,{signal:conTm(12000)});if(!r.ok)throw 0;const t=await r.text();if(!t||t.length<100)throw 0;return{md:true,texto:t};},
-  async u=>{const r=await fetch('https://api.allorigins.win/get?url='+encodeURIComponent(u),{signal:conTm(12000)});if(!r.ok)throw 0;const j=await r.json();const t=(j&&j.contents)||'';if(!t||t.length<200)throw 0;return{md:false,texto:t};},
-  async u=>{const r=await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(u),{signal:conTm(12000)});if(!r.ok)throw 0;const t=await r.text();if(!t||t.length<200)throw 0;return{md:false,texto:t};}
-];
 async function traerPagina(url){
-  for(const tr of TRANSPORTES){
-    try{const res=await tr(url);if(res.md||res.texto.length>150)return res;}catch(e){}
-  }
-  throw new Error('sin salida');
+  const r=await fetch('https://r.jina.ai/'+url,{signal:conTm(8000)});
+  if(!r.ok)throw new Error('jina '+r.status);
+  const t=await r.text();
+  if(!t||t.length<100)throw new Error('jina vacío');
+  return{md:true,texto:t};
 }
-async function tryFetch(url){
-  const p=await traerPagina(url);
-  return p.texto;
-}
+// tryFetch eliminado
 function slugLc(s){
   return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/ñ/g,'n').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
@@ -925,12 +886,12 @@ function slugLc(s){
 function parsearBuscaLc(texto){
   const filas=[];
   let m;
-  if(/\[Image \d+\]/.test(texto.slice(0,2000))||texto.indexOf('<td')<0){
-    const re=/\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/([a-z0-9_]+)\/\)[\s\S]{0,60}?\[([^\]]+)\]\(javascript:[^)]*\)/gi;
-    while((m=re.exec(texto)))filas.push({artista:m[1].trim(),artistaSlug:m[2],titulo:m[3].trim()});
-  }else{
+  if(texto.indexOf('<td')>-1){
     const re=/href="(\/[a-z0-9_]+\/)"[^>]*>([^<]{1,80})<\/a>\s*<\/t[dD]>\s*<[tT][dD]>[\s\S]*?<li[^>]*><a href="javascript:[^"]*">([^<]+)<\/[aA]>/g;
     while((m=re.exec(texto)))filas.push({artista:m[2].trim(),artistaSlug:m[1],titulo:m[3].trim()});
+  }else{
+    const re=/\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/([a-z0-9_]+)\/\)\*?\s+(.+)/g;
+    while((m=re.exec(texto)))filas.push({artista:m[1].trim(),artistaSlug:m[2],titulo:m[3].trim()});
   }
   return filas;
 }
@@ -966,12 +927,13 @@ async function buscarLaCuerda(q){
 }
 function parsearArtistaLC(html,slug){
   const res=[];
-  const re=/<li id='[^']*'[^>]*><a href="([^"]+)">([^<]+)/gi;
   let m;
-  while((m=re.exec(html))){
-    res.push({titulo:m[2].replace(/<[^>]+>/g,'').trim(),tipo:'Acordes',votos:0,
-      url:'https://acordes.lacuerda.net/'+slug+'/'+m[1]+'.shtml',
-      fuenteId:'lacuerda',fuenteNombre:'LaCuerda'});
+  if(html.indexOf('<li')>-1){
+    const re=/<li id='[^']*'[^>]*><a href="([^"]+)">([^<]+)/gi;
+    while((m=re.exec(html)))res.push({titulo:m[2].replace(/<[^>]+>/g,'').trim(),tipo:'Acordes',votos:0,url:'https://acordes.lacuerda.net/'+slug+'/'+m[1]+'.shtml',fuenteId:'lacuerda',fuenteNombre:'LaCuerda'});
+  }else{
+    const re=/\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/[a-z0-9_]+\/([a-z0-9_]+)\)/gi;
+    while((m=re.exec(html)))res.push({titulo:m[1].trim(),tipo:'Acordes',votos:0,url:'https://acordes.lacuerda.net/'+slug+'/'+m[2]+'.shtml',fuenteId:'lacuerda',fuenteNombre:'LaCuerda'});
   }
   return res;
 }
@@ -1040,32 +1002,7 @@ async function buscarUG(q){
     return parsearBuscaUG(pag.texto).slice(0,20);
   }catch(e){return [];}
 }
-async function ugSearch(q){
-  const u='https://www.ultimate-guitar.com/search.php?search_term='+encodeURIComponent(q)+'&type=300';
-  const html=await tryFetch(u);
-  let res=null;
-  const mi=html.indexOf('__UG_DATA__');
-  if(mi>-1){
-    const bi=html.indexOf('{',mi);
-    if(bi>-1){
-      try{
-        const list=findResults(extractJson(html,bi));
-        if(list)res=list.filter(x=>x.tab_url).map(x=>({
-          title:entDecode(x.song_name||''),
-          artist:entDecode(x.artist_name||''),
-          type:x.type||'',
-          votes:x.votes||0,
-          url:x.tab_url
-        }));
-      }catch(e){}
-    }
-  }
-  if(!res){
-    const urls=[...new Set(html.match(/https:\/\/tabs\.ultimate-guitar\.com\/tab\/[^"'\\\s<>]+/g)||[])];
-    res=urls.map(fromUrl).filter(Boolean);
-  }
-  return res.sort((a,b)=>(b.votes||0)-(a.votes||0)).slice(0,30);
-}
+// ugSearch eliminado
 function extractTab(html){
   let m=html.match(/wiki_tab"\s*:\s*\{[^{}]*?"content"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if(m){try{return JSON.parse('"'+m[1]+'"');}catch(e){}}
