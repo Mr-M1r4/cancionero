@@ -872,13 +872,23 @@ function hidePop(){$('pop').style.display='none';}
 
 function conTm(ms){const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal;}
 async function traerPagina(url){
-  const r=await fetch('https://r.jina.ai/'+url,{signal:conTm(8000)});
-  if(!r.ok)throw new Error('jina '+r.status);
-  const t=await r.text();
-  if(!t||t.length<100)throw new Error('jina vacío');
-  return{md:true,texto:t};
+  let err;
+  for(let i=0;i<2;i++){
+    try{
+      const r=await fetch('https://r.jina.ai/'+url,{signal:conTm(20000)});
+      if(!r.ok)throw new Error('jina '+r.status);
+      const t=await r.text();
+      if(!t||t.length<100)throw new Error('jina vacío');
+      return{md:true,texto:t};
+    }catch(e){err=e;}
+  }
+  throw err;
 }
 // tryFetch eliminado
+async function tryFetch(url){
+  const p=await traerPagina(url);
+  return p.texto;
+}
 function slugLc(s){
   return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/ñ/g,'n').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
@@ -887,11 +897,14 @@ function parsearBuscaLc(texto){
   const filas=[];
   let m;
   if(texto.indexOf('<td')>-1){
-    const re=/href="(\/[a-z0-9_]+\/)"[^>]*>([^<]{1,80})<\/a>\s*<\/t[dD]>\s*<[tT][dD]>[\s\S]*?<li[^>]*><a href="javascript:[^"]*">([^<]+)<\/[aA]>/g;
+    const re=/href="(\/[a-z0-9_]+\/)"[^>]*>([^<]{1,80})<\/[aA]>\s*<\/t[dD]>\s*<[tT][dD]>[\s\S]*?<[lL][iI][^>]*>[^<]*<[aA][^>]*>([^<]+)<\/[aA]>/g;
     while((m=re.exec(texto)))filas.push({artista:m[2].trim(),artistaSlug:m[1],titulo:m[3].trim()});
   }else{
-    const re=/\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/([a-z0-9_]+)\/\)\*?\s+(.+)/g;
-    while((m=re.exec(texto)))filas.push({artista:m[1].trim(),artistaSlug:m[2],titulo:m[3].trim()});
+    const re=/(?:^|\n)\s*\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/([a-z0-9_]+)\/\)\*?[ \t]*(?:\[([^\]]+)\]\(javascript:[^)]*\)|([^\n]*))/g;
+    while((m=re.exec(texto))){
+      const titulo=(m[3]||m[4]||'').trim();
+      if(m[1].trim())filas.push({artista:m[1].trim(),artistaSlug:m[2],titulo:titulo});
+    }
   }
   return filas;
 }
@@ -903,8 +916,16 @@ function extraerLc(pag){
       .replace(/^URL Source:[^\n]*$/mi,'')
       .replace(/^Published Time:[^\n]*$/mi,'')
       .replace(/^Markdown Content:\s*$/mi,'');
-    const li=cuerpo.search(/^[ \t]{2,}[^\s]/m);
-    if(li>0)cuerpo=cuerpo.slice(li);
+    const lin=cuerpo.split('\n');
+    let ini=0;
+    for(let i=0;i<lin.length;i++){
+      const t=lin[i].trim();
+      if(!t)continue;
+      if(/^(Mostrar|Desfile|Diagramas|Cambio|Cifrado|Formato|Conexión|Inscripción|Añade)/i.test(t))continue;
+      if(/^[-_=\s]+$/.test(t))continue;
+      ini=i;break;
+    }
+    cuerpo=lin.slice(ini).join('\n');
   }else{
     const mt=pag.texto.match(/<div id=t_body>[\s\S]*?<PRE>([\s\S]*?)<\/PRE>/i)
       ||pag.texto.match(/<PRE>([\s\S]*?)<\/PRE>/i);
@@ -932,8 +953,8 @@ function parsearArtistaLC(html,slug){
     const re=/<li id='[^']*'[^>]*><a href="([^"]+)">([^<]+)/gi;
     while((m=re.exec(html)))res.push({titulo:m[2].replace(/<[^>]+>/g,'').trim(),tipo:'Acordes',votos:0,url:'https://acordes.lacuerda.net/'+slug+'/'+m[1]+'.shtml',fuenteId:'lacuerda',fuenteNombre:'LaCuerda'});
   }else{
-    const re=/\[([^\]]+)\]\(https:\/\/acordes\.lacuerda\.net\/[a-z0-9_]+\/([a-z0-9_]+)\)/gi;
-    while((m=re.exec(html)))res.push({titulo:m[1].trim(),tipo:'Acordes',votos:0,url:'https://acordes.lacuerda.net/'+slug+'/'+m[2]+'.shtml',fuenteId:'lacuerda',fuenteNombre:'LaCuerda'});
+    const re=new RegExp('\\[([^\\]]+)\\]\\(https:\\/\\/acordes\\.lacuerda\\.net\\/'+slug+'\\/([a-z0-9_]+)\\)','gi');
+    while((m=re.exec(html)))res.push({titulo:m[1].replace(/\s*_acordes_\s*$/i,'').trim(),tipo:'Acordes',votos:0,url:'https://acordes.lacuerda.net/'+slug+'/'+m[2]+'.shtml',fuenteId:'lacuerda',fuenteNombre:'LaCuerda'});
   }
   return res;
 }
@@ -955,11 +976,26 @@ async function buscarArtista(q){
     traerPagina('https://acordes.lacuerda.net/'+sLc+'/').then(p=>parsearArtistaLC(p.texto,sLc).map(c=>({...c,artista:name}))),
     traerPagina('https://www.cifraclub.com.br/'+sCc+'/').then(p=>parsearArtistaCC(p.texto).map(c=>({...c,artista:name})))
   ]);
-  const canciones=[];
-  if(rLc.status==='fulfilled')canciones.push(...rLc.value);
-  if(rCc.status==='fulfilled')canciones.push(...rCc.value);
+  const lc=rLc.status==='fulfilled'?rLc.value:[];
+  const cc=rCc.status==='fulfilled'?rCc.value:[];
+  const lcTit=new Set(lc.map(c=>c.titulo.toLowerCase()));
+  const lcUnicos=lc.filter(c=>!cc.some(x=>x.titulo.toLowerCase()===c.titulo.toLowerCase()));
+  const res=[];
   const seen=new Set();
-  return canciones.filter(c=>{const k=c.titulo.toLowerCase();if(seen.has(k))return false;seen.add(k);return true;}).slice(0,60);
+  const max=Math.max(lcUnicos.length,cc.length)*2;
+  for(let i=0;i<max;i++){
+    if(res.length>=30)break;
+    if(i<lcUnicos.length){
+      const c=lcUnicos[i];const k=c.titulo.toLowerCase();
+      if(!seen.has(k)){seen.add(k);res.push(c);}
+    }
+    if(i<cc.length){
+      const c=cc[i];const k=c.titulo.toLowerCase();
+      if(!seen.has(k)){seen.add(k);res.push(c);}
+    }
+    if(i>=lcUnicos.length&&i>=cc.length)break;
+  }
+  return res;
 }
 function extraerCc(pag){
   let txt=pag.md?pag.texto:pag.texto;
@@ -973,13 +1009,14 @@ function extraerCc(pag){
 
 function parsearBuscaUG(md){
   const res=[];
+  if(!md)return res;
   const re=/\[([^\]]+)\]\(https:\/\/tabs\.ultimate-guitar\.com\/tab\/([^)]+)\)/g;
   let m;
   while((m=re.exec(md))){
-    if(m[1].length<2)continue;
+    if(m[1].length<2||m[2].indexOf('javascript')===0)continue;
     const parts=m[2].split('/');
     const artista=parts[0]||'';
-    res.push({titulo:m[1],artista:artista.split('_').map(w=>w[0].toUpperCase()+w.slice(1)).join(' '),tipo:'Acordes',votos:0,
+    res.push({titulo:m[1],artista:artista.split('-').map(w=>w[0].toUpperCase()+w.slice(1)).join(' '),tipo:'Acordes',votos:0,
       url:'https://tabs.ultimate-guitar.com/tab/'+m[2],
       fuenteId:'ug',fuenteNombre:'Ultimate Guitar'});
   }
@@ -999,7 +1036,14 @@ function extraerUG(pag){
 async function buscarUG(q){
   try{
     const pag=await traerPagina('https://www.ultimate-guitar.com/search.php?search_term='+encodeURIComponent(q)+'&type=300');
-    return parsearBuscaUG(pag.texto).slice(0,20);
+    const tokens=(q||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').split(/\s+/).filter(Boolean);
+    let lista=parsearBuscaUG(pag.texto);
+    if(tokens.length){
+      const rele=lista.filter(r=>tokens.every(t=>r.titulo.toLowerCase().includes(t)||r.artista.toLowerCase().includes(t)));
+      if(rele.length)lista=rele;
+      else lista=[];
+    }
+    return lista.slice(0,20);
   }catch(e){return [];}
 }
 // ugSearch eliminado
