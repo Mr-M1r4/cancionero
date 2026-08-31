@@ -528,7 +528,7 @@ function plainSeg(seg,steps,add){
   for(const tk of toks){
     if(tk===''||/^\s+$/.test(tk)){infos.push({tk,ch:false});continue;}
     const core=tk.replace(/^[^\w\[]+/,'').replace(/[^#\w\]]+$/,'');
-    if(isValidChord(core))infos.push({tk,core,ch:true});
+    if(/^[A-G]/.test(core)&&isValidChord(core))infos.push({tk,core,ch:true});
     else infos.push({tk,ch:false});
   }
   return infos.map(x=>{
