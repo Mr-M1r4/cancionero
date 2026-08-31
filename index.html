@@ -378,7 +378,7 @@ function normalizarAcordes(texto){
     const cores=parts.map(tk=>{
       if(!tk||/^\s+$/.test(tk))return null;
       words++;
-      const core=tk.replace(/^[^\w\[\]]+/,'').replace(/[^\w\]]+$/,'');
+      const core=tk.replace(/^[^\w\[\]]+/,'').replace(/[^#\w\]]+$/,'');
       if(isValidChord(core))n++;
       return core;
     });
@@ -525,15 +525,12 @@ function plainSeg(seg,steps,add){
   if(/^\[[^\[\]]{1,40}\]$/.test(t))return '<span class="sec">'+esc(seg)+'</span>';
   const toks=seg.split(/(\s+)/);
   const infos=[];
-  let words=0,chordsN=0;
   for(const tk of toks){
     if(tk===''||/^\s+$/.test(tk)){infos.push({tk,ch:false});continue;}
-    words++;
-    const core=tk.replace(/^[^\w\[]+/,'').replace(/[^\w\]]+$/,'');
-    if(isValidChord(core)){chordsN++;infos.push({tk,core,ch:true});}
+    const core=tk.replace(/^[^\w\[]+/,'').replace(/[^#\w\]]+$/,'');
+    if(isValidChord(core))infos.push({tk,core,ch:true});
     else infos.push({tk,ch:false});
   }
-  if(!(chordsN>=1&&words>0&&chordsN/words>=0.55))return esc(seg);
   return infos.map(x=>{
     if(!x.ch)return esc(x.tk);
     const name=steps?transposeChord(x.core,steps):x.core;
@@ -553,7 +550,7 @@ function esLineaAcordes(l){
   if(!toks.length)return false;
   let n=0;
   for(const t of toks){
-    const c=t.replace(/^[^\w\[]+/,'').replace(/[^\w\]]+$/,'');
+    const c=t.replace(/^[^\w\[]+/,'').replace(/[^#\w\]]+$/,'');
     if(isValidChord(c))n++;
   }
   return n/toks.length>=0.55;
