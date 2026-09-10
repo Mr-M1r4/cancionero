@@ -1120,6 +1120,7 @@ function openModal(editId){
    setStatus($('searchStatus'),textoModo(),false);
   setStatus($('lyricsStatus'),'',false);
   stopScroll();
+  switchPane(editingId?'paste':'search');
   $('modal').classList.add('open');
   setTimeout(()=>editingId?$('songText').focus():$('inpTitle').focus(),50);
 }
