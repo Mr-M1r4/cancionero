@@ -722,6 +722,19 @@ function loadAll(){
     songs=JSON.parse(localStorage.getItem(LS_KEY)||'[]');
     if(!Array.isArray(songs))songs=[];
   }catch(e){songs=[];}
+  let changed=false;
+  songs=songs.map(s=>{
+    if(!s||typeof s!=='object'){changed=true;return null;}
+    const t=typeof s.title==='string'?s.title.trim():'';
+    const a=typeof s.artist==='string'?s.artist.trim():'';
+    const x=typeof s.text==='string'?s.text:'';
+    const tr=Number.isFinite(+s.transpose)?Math.round(+s.transpose):0;
+    const id=String(s.id??uid());
+    if(s.title!==t||s.artist!==a||s.text!==x||s.transpose!==tr||s.id!==id)changed=true;
+    s.title=t;s.artist=a;s.text=x;s.transpose=tr;s.id=id;
+    return s;
+  }).filter(Boolean);
+  if(changed)persist();
   if(!localStorage.getItem(LS_SEED)){
     localStorage.setItem(LS_SEED,'1');
     if(!songs.length)songs.push(seedSong());
@@ -785,15 +798,15 @@ function entDecode(s){
 function renderList(){
   const ul=$('songList');
   const q=$('filter').value.trim().toLowerCase();
-  const list=[...songs].sort((a,b)=>a.title.localeCompare(b.title,'es'));
-  const vis=list.filter(s=>!q||(s.title+' '+(s.artist||'')).toLowerCase().includes(q));
+  const list=[...songs].sort((a,b)=>String(a.title??'').localeCompare(String(b.title??''),'es'));
+  const vis=list.filter(s=>!q||(String(s.title)+' '+(s.artist||'')).toLowerCase().includes(q));
   if(!vis.length){
     ul.innerHTML='<li class="empty">'+(songs.length?'Ningún resultado.':'Todavía no hay canciones.<br>Pulsa «+ Nueva canción».')+'</li>';
     return;
   }
   ul.innerHTML=vis.map(s=>{
     const tr=s.transpose?'<span style="color:var(--chord)"> · tono '+(s.transpose>0?'+':'')+s.transpose+'</span>':'';
-    return '<li data-id="'+s.id+'"'+(s.id===currentId?' class="active"':'')+'><b>'+esc(s.title)+'</b>'+
+    return '<li data-id="'+s.id+'"'+(String(s.id)===String(currentId)?' class="active"':'')+'><b>'+esc(s.title)+'</b>'+
       '<span>'+esc(s.artist||'—')+tr+'</span></li>';
   }).join('');
 }
@@ -818,7 +831,9 @@ function openSong(id){
 function renderAll(){
   const s=buscarPorId(currentId);
   if(!s)return;
-  const {html,chords}=analyze(s.text,tSteps);
+  let html='',chords=[];
+  try{const r=analyze(s.text,tSteps);html=r.html;chords=r.chords;}
+  catch(e){console.error(e);html='<span style="color:var(--mut)">Error al procesar la canción.</span>';}
   $('sheet').innerHTML=html||'<span style="color:var(--mut)">Esta canción no tiene texto todavía. Edítala para añadir letra y acordes.</span>';
   $('sheet').style.fontSize=prefs.fs+'px';
   renderDiagrams(chords);
@@ -1297,22 +1312,27 @@ async function doLyrics(){
 }
 
 function onSave(){
-  const title=$('inpTitle').value.trim();
-  const text=normalizarAcordes($('songText').value.replace(/\r/g,'').trim());
-  if(!title){toast('Escribe un título.');$('inpTitle').focus();return;}
-  if(!text){toast('Pega o busca la letra con acordes.');$('songText').focus();return;}
-  if(editingId){
-    const s=buscarPorId(editingId);
-    if(s){s.title=title;s.artist=$('inpArtist').value.trim();s.text=text;}
-  }else{
-    songs.unshift({id:uid(),title,artist:$('inpArtist').value.trim(),text,transpose:0,created:Date.now()});
+  try{
+    const title=$('inpTitle').value.trim();
+    const text=normalizarAcordes($('songText').value.replace(/\r/g,'').trim());
+    if(!title){toast('Escribe un título.');$('inpTitle').focus();return;}
+    if(!text){toast('Pega o busca la letra con acordes.');$('songText').focus();return;}
+    if(editingId){
+      const s=buscarPorId(editingId);
+      if(s){s.title=title;s.artist=$('inpArtist').value.trim();s.text=text;}
+    }else{
+      songs.unshift({id:uid(),title,artist:$('inpArtist').value.trim(),text,transpose:0,created:Date.now()});
+    }
+    const target=editingId||songs[0].id;
+    persist();
+    renderList();
+    closeModal();
+    toast(editingId?'Canción actualizada.':'Canción añadida al cuaderno.');
+    try{openSong(target);}catch(e){console.error(e);}
+  }catch(e){
+    console.error(e);
+    toast('No se pudo guardar: '+e.message);
   }
-  const target=editingId||songs[0].id;
-  persist();
-  renderList();
-  closeModal();
-  toast(editingId?'Canción actualizada.':'Canción añadida al cuaderno.');
-  openSong(target);
 }
 
 function applyTheme(){
