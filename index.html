@@ -367,11 +367,45 @@ function nombreIng(p){
   if(p.bass)s+='/'+fmtN(p.bassIdx,p.bassFlat);
   return s;
 }
+function desglosarInline(texto){
+  const clase=tok=>{
+    const core=tok.replace(/^[^\w\[]+/,'').replace(/[^#\w\]]+$/,'');
+    if(core&&/^[A-G]/.test(core)&&isValidChord(core))return 1;
+    if(/[A-Za-z\u00C0-\u00FF]/.test(tok))return 2;
+    return 0;
+  };
+  return texto.split('\n').map(l=>{
+    const t=l.trim();
+    if(!t)return l;
+    if(/^\[[^\[\]]{1,40}\]$/.test(t))return l;
+    if(/[|]\s?[-]+|[-]{6}/.test(t))return l;
+    const toks=t.split(/\s+/).filter(Boolean);
+    const ac=toks.filter(x=>clase(x)===1);
+    const pa=toks.filter(x=>clase(x)===2);
+    if(!ac.length||!pa.length)return l;
+    const n=pa.length,m=ac.length;
+    const ly=pa.join(' ');
+    const cols=[];
+    let col=0;
+    for(const w of pa){cols.push(col);col+=w.length+1;}
+    const dir=m>1?i=>Math.round(i*(n-1)/(m-1)):()=>0;
+    const lc=new Array(ly.length+1).fill(' ');
+    let ocup=0;
+    ac.forEach((c,i)=>{
+      const pos=cols[dir(i)];
+      if(pos<ocup)pos=ocup;
+      for(let k=0;k<c.length&&pos+k<lc.length;k++)lc[pos+k]=c[k];
+      ocup=pos+c.length+1;
+    });
+    return lc.join('').replace(/\s+$/,'')+'\n'+ly;
+  }).join('\n');
+}
 function normalizarAcordes(texto){
   texto=texto.replace(/\[ch\]([^\[\]]+)\[\/ch\]/gi,(mm,x)=>{
     const p=parseFull(x.trim());
     return p?'[ch]'+nombreIng(p)+'[/ch]':mm;
   });
+  texto=desglosarInline(texto);
   return texto.split('\n').map(l=>{
     const parts=l.split(/(\s+)/);
     let words=0,n=0;
