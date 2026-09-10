@@ -392,7 +392,7 @@ function desglosarInline(texto){
     const lc=new Array(ly.length+1).fill(' ');
     let ocup=0;
     ac.forEach((c,i)=>{
-      const pos=cols[dir(i)];
+      let pos=cols[dir(i)];
       if(pos<ocup)pos=ocup;
       for(let k=0;k<c.length&&pos+k<lc.length;k++)lc[pos+k]=c[k];
       ocup=pos+c.length+1;
