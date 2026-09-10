@@ -696,6 +696,11 @@ function loadAll(){
 }
 function savePrefs(){try{localStorage.setItem(LS_PREFS,JSON.stringify(prefs));}catch(e){}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function buscarPorId(id){
+  const s=songs.find(x=>x&&String(x.id)===String(id));
+  if(s&&typeof s.id!=='string'){s.id=String(s.id);persist();}
+  return s;
+}
 
 function seedSong(){
   return {
@@ -760,7 +765,7 @@ function renderList(){
 }
 
 function openSong(id){
-  const s=songs.find(x=>x.id===id);
+  const s=buscarPorId(id);
   if(!s)return;
   stopScroll();
   currentId=id;
@@ -777,7 +782,7 @@ function openSong(id){
   renderList();
 }
 function renderAll(){
-  const s=songs.find(x=>x.id===currentId);
+  const s=buscarPorId(currentId);
   if(!s)return;
   const {html,chords}=analyze(s.text,tSteps);
   $('sheet').innerHTML=html||'<span style="color:var(--mut)">Esta canción no tiene texto todavía. Edítala para añadir letra y acordes.</span>';
@@ -802,7 +807,7 @@ function updTL(){$('tLabel').textContent=(tSteps>0?'+':'')+tSteps;}
 
 function setSteps(v){
   tSteps=v;
-  const s=songs.find(x=>x.id===currentId);
+  const s=buscarPorId(currentId);
   if(s){s.transpose=tSteps;persist();renderList();}
   updTL();
   renderAll();
@@ -1072,7 +1077,7 @@ function openModal(editId){
   textoPreRelleno=null;
   $('btnUnfill').classList.add('hide');
   $('mTitle').textContent=editingId?'Editar canción':'Nueva canción';
-  const s=editingId?songs.find(x=>x.id===editingId):null;
+  const s=editingId?buscarPorId(editingId):null;
   $('inpTitle').value=s?s.title:'';
   $('inpArtist').value=s?(s.artist||''):'';
   $('songText').value=s?s.text:'';
@@ -1262,7 +1267,7 @@ function onSave(){
   if(!title){toast('Escribe un título.');$('inpTitle').focus();return;}
   if(!text){toast('Pega o busca la letra con acordes.');$('songText').focus();return;}
   if(editingId){
-    const s=songs.find(x=>x.id===editingId);
+    const s=buscarPorId(editingId);
     if(s){s.title=title;s.artist=$('inpArtist').value.trim();s.text=text;}
   }else{
     songs.unshift({id:uid(),title,artist:$('inpArtist').value.trim(),text,transpose:0,created:Date.now()});
@@ -1286,9 +1291,9 @@ function bind(){
   $('btnEdit').onclick=()=>currentId&&openModal(currentId);
   $('btnDelete').onclick=()=>{
     if(!currentId)return;
-    const s=songs.find(x=>x.id===currentId);
+    const s=buscarPorId(currentId);
     if(confirm('¿Eliminar «'+(s?s.title:'')+'» del cuaderno?')){
-      songs=songs.filter(x=>x.id!==currentId);
+      songs=songs.filter(x=>String(x.id)!==String(currentId));
       persist();
       closeViewer();
       toast('Canción eliminada.');
@@ -1328,12 +1333,12 @@ function bind(){
   $('chkNotes').onchange=e=>{
     prefs.notes=e.target.checked;
     savePrefs();
-    const s=songs.find(x=>x.id===currentId);
+    const s=buscarPorId(currentId);
     if(s)renderDiagrams(analyze(s.text,tSteps).chords);
   };
   $('chkDiag').onchange=()=>renderDiagrams(lastChords());
   function lastChords(){
-    const s=songs.find(x=>x.id===currentId);
+    const s=buscarPorId(currentId);
     return s?analyze(s.text,tSteps).chords:[];
   }
 
@@ -1365,9 +1370,12 @@ function bind(){
         let n=0;
         for(const it of arr){
           if(it&&it.title&&it.text){
-            it.id=it.id||uid();
-            it.transpose=it.transpose||0;
-            if(songs.some(x=>x.id===it.id))continue;
+            it.id=String(it.id||uid());
+            it.title=String(it.title);
+            it.artist=it.artist?String(it.artist):'';
+            it.text=String(it.text);
+            it.transpose=typeof it.transpose==='number'?Math.round(it.transpose):0;
+            if(songs.some(x=>String(x.id)===it.id))continue;
             songs.push(it);
             n++;
           }
